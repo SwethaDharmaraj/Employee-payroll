@@ -166,7 +166,7 @@ class ExpenseView(tk.Frame):
     def _refresh_emp_list(self):
         conn = self.db.get_connection()
         cur  = conn.cursor()
-        cur.execute("SELECT emp_id, name FROM employees ORDER BY name")
+        cur.execute("SELECT emp_id, name FROM employees ORDER BY emp_id ASC")
         self._emps = cur.fetchall()
         conn.close()
         items = [f"{r['emp_id']} – {r['name']}" for r in self._emps]

@@ -108,7 +108,15 @@ class DatabaseManager:
                 total1             REAL DEFAULT 0,
                 total2             REAL DEFAULT 0,
                 shortage           REAL DEFAULT 0,
-                finalized_amount   REAL DEFAULT 0
+                finalized_amount   REAL DEFAULT 0,
+                opening_cash       REAL DEFAULT 0,
+                gpay_sales         REAL DEFAULT 0,
+                taken_500          REAL DEFAULT 0,
+                actual_cash        REAL DEFAULT 0,
+                cash_sales         REAL DEFAULT 0,
+                expected_cash      REAL DEFAULT 0,
+                difference         REAL DEFAULT 0,
+                next_opening_cash  REAL DEFAULT 0
             )
         ''')
 
@@ -140,6 +148,14 @@ class DatabaseManager:
                 pass  # column already exists
 
         # cashier_records: no migrations needed for fresh start
+        add_col("cashier_records", "opening_cash", "REAL DEFAULT 0")
+        add_col("cashier_records", "gpay_sales", "REAL DEFAULT 0")
+        add_col("cashier_records", "taken_500", "REAL DEFAULT 0")
+        add_col("cashier_records", "actual_cash", "REAL DEFAULT 0")
+        add_col("cashier_records", "cash_sales", "REAL DEFAULT 0")
+        add_col("cashier_records", "expected_cash", "REAL DEFAULT 0")
+        add_col("cashier_records", "difference", "REAL DEFAULT 0")
+        add_col("cashier_records", "next_opening_cash", "REAL DEFAULT 0")
 
         # employees: ensure all columns exist
         add_col("employees", "designation", "TEXT")

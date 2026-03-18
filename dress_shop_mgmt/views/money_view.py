@@ -2,570 +2,436 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
 
-from views.shared_widgets import (
-    CalendarPopup, DatePickerButton, enable_smooth_scroll
-)
+from views.shared_widgets import DatePickerButton, enable_smooth_scroll
 
 THEME = {
-    "primary":    "#1D4ED8",
-    "primary_dk": "#1E40AF",
-    "secondary":  "#3B82F6",
-    "bg_page":    "#F1F5F9",
-    "bg_card":    "#FFFFFF",
-    "text_main":  "#0F172A",
-    "text_muted": "#475569",
-    "border":     "#CBD5E1",
-    "success":    "#10B981",
-    "dark":       "#0F172A",
-    "warning":    "#F59E0B",
-    "danger":     "#EF4444",
+    "primary": "#0F766E",
+    "primary_dk": "#115E59",
+    "secondary": "#0EA5E9",
+    "bg_page": "#F3F7F9",
+    "bg_card": "#FFFFFF",
+    "surface_alt": "#F8FAFC",
+    "text_main": "#102A43",
+    "text_muted": "#64748B",
+    "border": "#D8E3EC",
+    "success": "#16A34A",
+    "dark": "#0F172A",
+    "warning": "#D97706",
+    "danger": "#DC2626",
 }
-
-DENOMS = [10, 20, 50, 100, 200]
 
 
 class MoneyView(tk.Frame):
     def __init__(self, parent, db):
         super().__init__(parent, bg=THEME["bg_page"])
         self.db = db
-
-        # --- Internal States ---
-        self._total1 = 0.0
-        self._total2 = 0.0
-        self._shortage = 0.0
-        self._finalized = 0.0
-
-        # Column 2: Opening Count (Previous Day - Auto-fetched)
-        self.opening_vars = {d: tk.IntVar(value=0) for d in DENOMS}
-        # Column 3: Closing Count (Today's Count - User Input)
-        self.closing_vars = {d: tk.StringVar(value="0") for d in DENOMS}
-
-        # Additional Inputs
-        self.total_sales_var = tk.StringVar(value="0")
-        self.cash_received_var = tk.StringVar(value="0")  # ₹500 Notes amount
-        self.upi_gpay_var = tk.StringVar(value="0")
-        self.expenses_var = tk.StringVar(value="0")
-
-        # Breakdown Text
-        self.total1_txt = tk.StringVar(value="Total1 = (Cash In - Cash Out) = ₹0")
-        self.total2_txt = tk.StringVar(value="Total2 = (Sales - (GPay + 500s)) = ₹0")
-        self.shortage_txt = tk.StringVar(value="Shortage = (Total2 + Total1) = ₹0")
-        self.final_txt = tk.StringVar(value="Final = (Shortage - Expenses) = ₹0")
-
-        self.diff_labels = {}
-        self.cash_in_labels = {}
-        self.cash_out_labels = {}
-
-        # Track all entry widgets for Enter-key navigation
+        self._selected_date = datetime.now().date()
         self._all_entries = []
 
-        # Selected date
-        self._selected_date = datetime.now().date()
+        self.total_sales_var = tk.StringVar(value="0")
+        self.gpay_sales_var = tk.StringVar(value="0")
+        self.taken_500_var = tk.StringVar(value="0")
+        self.expenses_var = tk.StringVar(value="0")
+        self.actual_cash_var = tk.StringVar(value="0")
+        self.opening_cash_var = tk.StringVar(value="0")
+
+        self.cash_sales_txt = tk.StringVar(value="Rs 0.00")
+        self.expected_cash_txt = tk.StringVar(value="Rs 0.00")
+        self.difference_txt = tk.StringVar(value="Rs 0.00")
+        self.next_opening_txt = tk.StringVar(value="Rs 0.00")
+        self.status_txt = tk.StringVar(value="No loss or gain")
+
+        self.calc_line1 = tk.StringVar(value="cash_sales = total_sales - gpay_sales = Rs 0.00")
+        self.calc_line2 = tk.StringVar(value="expected_cash = opening_cash + cash_sales - taken_500 - expenses = Rs 0.00")
+        self.calc_line3 = tk.StringVar(value="difference = actual_cash - expected_cash = Rs 0.00")
+        self.calc_line4 = tk.StringVar(value="next_opening_cash = actual_cash = Rs 0.00")
 
         self._build_ui()
         self._load_data()
 
-    # ── Helper: Create a styled entry with focus effects ─────────────────────
-    def _styled_entry(self, parent, textvariable, width=12, justify="center",
-                      font=("Segoe UI", 11), track=True, **kw):
-        wrapper = tk.Frame(parent, bg="#E2E8F0", padx=2, pady=2)
+    def _styled_entry(self, parent, textvariable, width=16, justify="right", font=("Segoe UI", 12), track=True):
+        wrapper = tk.Frame(parent, bg=THEME["border"], padx=2, pady=2)
+        entry = tk.Entry(
+            wrapper,
+            textvariable=textvariable,
+            font=font,
+            width=width,
+            justify=justify,
+            bd=0,
+            bg=THEME["surface_alt"],
+            fg=THEME["text_main"],
+            insertbackground=THEME["primary"],
+        )
+        entry.pack(ipady=8, padx=1, pady=1, fill="x")
 
-        e = tk.Entry(wrapper, textvariable=textvariable, font=font, width=width,
-                     justify=justify, bd=0, bg="#F8FAFC",
-                     insertbackground=THEME["primary"],
-                     selectbackground=THEME["primary"],
-                     selectforeground="white", **kw)
-        e.pack(ipady=6, padx=1, pady=1)
-
-        def _focus_in(_):
+        def _focus_in(_event):
             wrapper.config(bg=THEME["primary"])
-            e.config(bg="white")
+            entry.config(bg="white")
+            if entry.cget("state") != "readonly":
+                entry.after(1, lambda: (entry.select_range(0, "end"), entry.icursor("end")))
 
-        def _focus_out(_):
-            wrapper.config(bg="#E2E8F0")
-            e.config(bg="#F8FAFC")
+        def _focus_out(_event):
+            wrapper.config(bg=THEME["border"])
+            entry.config(bg=THEME["surface_alt"])
 
-        e.bind("<FocusIn>", _focus_in)
-        e.bind("<FocusOut>", _focus_out)
-
+        entry.bind("<FocusIn>", _focus_in)
+        entry.bind("<FocusOut>", _focus_out)
         if track:
-            self._all_entries.append(e)
-
-        e.bind("<Return>", self._focus_next_entry)
-        e.bind("<KP_Enter>", self._focus_next_entry)
-
-        return wrapper, e
+            self._all_entries.append(entry)
+        entry.bind("<Return>", self._focus_next_entry)
+        entry.bind("<KP_Enter>", self._focus_next_entry)
+        return wrapper
 
     def _focus_next_entry(self, event):
         widget = event.widget
         if widget in self._all_entries:
             idx = self._all_entries.index(widget)
-            nxt = (idx + 1) % len(self._all_entries)
-            self._all_entries[nxt].focus_set()
-            self._all_entries[nxt].select_range(0, "end")
-            self._ensure_visible(self._all_entries[nxt])
+            nxt = self._all_entries[(idx + 1) % len(self._all_entries)]
+            nxt.focus_set()
+            nxt.select_range(0, "end")
         return "break"
 
-    def _ensure_visible(self, widget):
+    def _safe_float(self, var):
         try:
-            self.canvas.update_idletasks()
-            wy = widget.winfo_rooty() - self.scrollable_frame.winfo_rooty()
-            canvas_h = self.canvas.winfo_height()
-            top_frac = self.canvas.yview()[0]
-            total_h = self.scrollable_frame.winfo_reqheight()
-            top_px = top_frac * total_h
-            bottom_px = top_px + canvas_h
-            if wy < top_px + 40:
-                self.canvas.yview_moveto((wy - 40) / total_h)
-            elif wy > bottom_px - 80:
-                self.canvas.yview_moveto((wy - canvas_h + 80) / total_h)
-        except:
-            pass
+            return float(str(var.get()).replace(",", "").strip())
+        except Exception:
+            return 0.0
 
-    # ── Section Header Helper ────────────────────────────────────────────────
-    def _section_header(self, parent, icon, title, subtitle=None):
-        hdr = tk.Frame(parent, bg=THEME["bg_card"])
-        hdr.pack(fill="x", pady=(0, 12))
+    def _section_title(self, parent, title, subtitle):
+        wrap = tk.Frame(parent, bg=THEME["bg_card"])
+        wrap.pack(fill="x", pady=(0, 12))
+        tk.Label(
+            wrap,
+            text=title,
+            font=("Segoe UI Variable Display", 15, "bold"),
+            bg=THEME["bg_card"],
+            fg=THEME["text_main"],
+        ).pack(anchor="w")
+        tk.Label(
+            wrap,
+            text=subtitle,
+            font=("Segoe UI", 9),
+            bg=THEME["bg_card"],
+            fg=THEME["text_muted"],
+        ).pack(anchor="w", pady=(3, 0))
 
-        tk.Label(hdr, text=icon, font=("Segoe UI", 18),
-                 bg=THEME["bg_card"]).pack(side="left", padx=(0, 10))
-
-        txt_f = tk.Frame(hdr, bg=THEME["bg_card"])
-        txt_f.pack(side="left")
-        tk.Label(txt_f, text=title,
-                 font=("Segoe UI Variable Display", 13, "bold"),
-                 bg=THEME["bg_card"], fg=THEME["text_main"]).pack(anchor="w")
-        if subtitle:
-            tk.Label(txt_f, text=subtitle,
-                     font=("Segoe UI", 8),
-                     bg=THEME["bg_card"], fg=THEME["text_muted"]).pack(anchor="w")
-
-        accent = tk.Frame(parent, bg=THEME["primary"], height=2)
-        accent.pack(fill="x", pady=(0, 8))
-        return hdr
-
-    # ── Calendar Date Picker ─────────────────────────────────────────────────
-    def _on_date_picked(self, picked_date):
-        self._selected_date = picked_date
-        self._load_data()
-
-    # ── Build UI ─────────────────────────────────────────────────────────────
     def _build_ui(self):
-        # ── Scrollable Canvas ──
-        self.canvas = tk.Canvas(self, bg=THEME["bg_page"],
-                                highlightthickness=0, bd=0)
-        self.scrollbar = ttk.Scrollbar(self, orient="vertical",
-                                        command=self.canvas.yview)
-
+        self.canvas = tk.Canvas(self, bg=THEME["bg_page"], highlightthickness=0, bd=0)
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.scrollable_frame = tk.Frame(self.canvas, bg=THEME["bg_page"])
         self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            "<Configure>", lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         )
-
-        self.canvas_window = self.canvas.create_window(
-            (0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.bind('<Configure>', self._on_canvas_configure)
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfig(self.canvas_window, width=e.width))
+        self.canvas.configure(yscrollcommand=scrollbar.set)
         self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
-
-        # Enable smooth scrolling
+        scrollbar.pack(side="right", fill="y")
         enable_smooth_scroll(self.canvas)
 
         container = self.scrollable_frame
 
-        # ══════════════════════════════════════════════════════════════════════
-        # SECTION 1: TOP HEADER BAR
-        # ══════════════════════════════════════════════════════════════════════
-        header_card = tk.Frame(container, bg=THEME["bg_card"], padx=28, pady=18)
-        header_card.pack(fill="x", padx=16, pady=(12, 8))
-        header_card.config(highlightbackground=THEME["border"],
-                           highlightthickness=1)
+        header = tk.Frame(container, bg=THEME["bg_card"], padx=26, pady=20)
+        header.pack(fill="x", padx=16, pady=(14, 8))
+        header.config(highlightbackground=THEME["border"], highlightthickness=1)
 
-        # Left: Title
-        title_f = tk.Frame(header_card, bg=THEME["bg_card"])
-        title_f.pack(side="left")
-        tk.Label(title_f, text="🏧",
-                 font=("Segoe UI", 24),
-                 bg=THEME["bg_card"]).pack(side="left", padx=(0, 12))
-        t_txt = tk.Frame(title_f, bg=THEME["bg_card"])
-        t_txt.pack(side="left")
-        tk.Label(t_txt, text="Cashier Box Management",
-                 font=("Segoe UI Variable Display", 16, "bold"),
-                 bg=THEME["bg_card"], fg=THEME["text_main"]).pack(anchor="w")
-        tk.Label(t_txt, text="Manage daily denomination counts, sales & cash flow",
-                 font=("Segoe UI", 9),
-                 bg=THEME["bg_card"], fg=THEME["text_muted"]).pack(anchor="w")
+        title_side = tk.Frame(header, bg=THEME["bg_card"])
+        title_side.pack(side="left")
+        tk.Label(
+            title_side,
+            text="Vault & Cash Tracker",
+            font=("Segoe UI Variable Display", 18, "bold"),
+            bg=THEME["bg_card"],
+            fg=THEME["text_main"],
+        ).pack(anchor="w")
+        tk.Label(
+            title_side,
+            text="Daily cash flow based only on opening cash, sales, 500s taken, expenses, and actual cash.",
+            font=("Segoe UI", 9),
+            bg=THEME["bg_card"],
+            fg=THEME["text_muted"],
+        ).pack(anchor="w", pady=(4, 0))
 
-        # Right: Date Picker & Actions
-        action_f = tk.Frame(header_card, bg=THEME["bg_card"])
-        action_f.pack(side="right")
-
-        # Date picker button
+        action_side = tk.Frame(header, bg=THEME["bg_card"])
+        action_side.pack(side="right")
         self._date_picker = DatePickerButton(
-            action_f, initial_date=self._selected_date,
-            on_change=self._on_date_picked, bg=THEME["bg_card"])
+            action_side,
+            initial_date=self._selected_date,
+            on_change=self._on_date_picked,
+            bg=THEME["bg_card"],
+        )
         self._date_picker.pack(pady=(0, 8))
 
-        # Action buttons row
-        btn_row = tk.Frame(action_f, bg=THEME["bg_card"])
+        btn_row = tk.Frame(action_side, bg=THEME["bg_card"])
         btn_row.pack()
+        tk.Button(
+            btn_row,
+            text="Sync Day",
+            command=self._load_data,
+            bg=THEME["dark"],
+            fg="white",
+            activebackground="#334155",
+            activeforeground="white",
+            font=("Segoe UI Semibold", 9),
+            bd=0,
+            padx=14,
+            pady=7,
+            cursor="hand2",
+        ).pack(side="left", padx=(0, 6))
+        tk.Button(
+            btn_row,
+            text="History",
+            command=self._show_history,
+            bg=THEME["secondary"],
+            fg="white",
+            activebackground="#0284C7",
+            activeforeground="white",
+            font=("Segoe UI Semibold", 9),
+            bd=0,
+            padx=14,
+            pady=7,
+            cursor="hand2",
+        ).pack(side="left")
 
-        btn_style = {"bd": 0, "cursor": "hand2",
-                     "font": ("Segoe UI Semibold", 9),
-                     "fg": "white", "padx": 14, "pady": 7}
-
-        tk.Button(btn_row, text="🔄 Sync Day",
-                  command=self._load_data,
-                  bg=THEME["dark"],
-                  activebackground="#334155", **btn_style).pack(
-            side="left", padx=(0, 6))
-
-        tk.Button(btn_row, text="📜 History",
-                  command=self._show_history,
-                  bg=THEME["secondary"],
-                  activebackground="#4F46E5", **btn_style).pack(side="left")
-
-        # Hidden date entry (used internally by _load_data and _save_record)
-        self.date_ent = tk.Entry(action_f)
+        self.date_ent = tk.Entry(action_side)
         self.date_ent.insert(0, self._selected_date.strftime("%Y-%m-%d"))
 
-        # ══════════════════════════════════════════════════════════════════════
-        # SECTION 2: DENOMINATION TABLE
-        # ══════════════════════════════════════════════════════════════════════
-        table_card = tk.Frame(container, bg=THEME["bg_card"], padx=24, pady=20)
-        table_card.pack(fill="x", padx=16, pady=8)
-        table_card.config(highlightbackground=THEME["border"],
-                          highlightthickness=1)
+        top = tk.Frame(container, bg=THEME["bg_page"])
+        top.pack(fill="x", padx=16, pady=8)
+        top.columnconfigure(0, weight=5)
+        top.columnconfigure(1, weight=4)
 
-        self._section_header(table_card, "💵", "Denomination Counter",
-                             "Opening (auto-fetched) vs Closing (your input)")
+        inputs_card = tk.Frame(top, bg=THEME["bg_card"], padx=24, pady=22)
+        inputs_card.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        inputs_card.config(highlightbackground=THEME["border"], highlightthickness=1)
+        self._section_title(inputs_card, "Daily Inputs", "Enter the six values for the selected day.")
 
-        col_configs = [
-            ("Denomination",       14, "w"),
-            ("Opening (Prev Day)", 14, "center"),
-            ("Closing (Today)",    14, "center"),
-            ("Difference",         12, "center"),
-            ("Cash In (+)",        14, "center"),
-            ("Cash Out (−)",       14, "center"),
+        fields = [
+            ("Opening Cash", self.opening_cash_var, True),
+            ("Total Sales", self.total_sales_var, False),
+            ("GPay Sales", self.gpay_sales_var, False),
+            ("Taken 500", self.taken_500_var, False),
+            ("Expenses", self.expenses_var, False),
+            ("Actual Cash", self.actual_cash_var, False),
         ]
 
-        thead = tk.Frame(table_card, bg="#F0F4F8", pady=2)
-        thead.pack(fill="x", pady=(0, 2))
-        thead.columnconfigure(tuple(range(6)), weight=1)
-        for ci, (txt, w, anc) in enumerate(col_configs):
-            tk.Label(thead, text=txt,
-                     font=("Segoe UI Semibold", 9),
-                     bg="#F0F4F8", fg=THEME["text_muted"],
-                     width=w, anchor=anc, pady=10).grid(
-                row=0, column=ci, sticky="ew", padx=2)
-
-        for ri, d in enumerate(DENOMS):
-            stripe_bg = "#FAFBFC" if ri % 2 == 0 else THEME["bg_card"]
-            row = tk.Frame(table_card, bg=stripe_bg)
+        for label_text, var, readonly in fields:
+            row = tk.Frame(inputs_card, bg=THEME["bg_card"], pady=6)
             row.pack(fill="x")
-            row.columnconfigure(tuple(range(6)), weight=1)
+            tk.Label(
+                row,
+                text=label_text,
+                font=("Segoe UI Semibold", 10),
+                bg=THEME["bg_card"],
+                fg=THEME["text_main"],
+            ).pack(side="left")
+            wrap = self._styled_entry(row, var, track=not readonly)
+            wrap.pack(side="right")
+            if readonly:
+                entry = wrap.winfo_children()[0]
+                entry.config(state="readonly", readonlybackground="#EDF2F7", fg=THEME["text_main"])
+            else:
+                var.trace_add("write", lambda *_a: self._recalculate())
 
-            badge_f = tk.Frame(row, bg=stripe_bg)
-            badge_f.grid(row=0, column=0, sticky="ew", padx=2, pady=6)
-            tk.Label(badge_f, text=f"  ₹{d}  ",
-                     font=("Segoe UI Black", 11),
-                     bg=THEME["dark"], fg="white",
-                     pady=3, padx=8).pack(pady=4)
+        note = tk.Label(
+            inputs_card,
+            text="Opening cash is auto-filled from the previous day's actual cash.",
+            font=("Segoe UI", 9, "italic"),
+            bg=THEME["bg_card"],
+            fg=THEME["text_muted"],
+        )
+        note.pack(anchor="w", pady=(10, 0))
 
-            tk.Label(row, textvariable=self.opening_vars[d],
-                     font=("Segoe UI Semibold", 11),
-                     bg=stripe_bg, fg=THEME["secondary"],
-                     width=14).grid(row=0, column=1, sticky="ew", padx=2)
+        outputs_card = tk.Frame(top, bg=THEME["bg_card"], padx=24, pady=22)
+        outputs_card.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+        outputs_card.config(highlightbackground=THEME["border"], highlightthickness=1)
+        self._section_title(outputs_card, "Calculated Outputs", "These values follow your exact formula.")
 
-            cf = tk.Frame(row, bg=stripe_bg)
-            cf.grid(row=0, column=2, sticky="ew", padx=2)
-            entry_wrap, _ = self._styled_entry(
-                cf, self.closing_vars[d], width=10,
-                font=("Segoe UI Bold", 11))
-            entry_wrap.pack(pady=4)
-            self.closing_vars[d].trace_add("write",
-                                           lambda *a: self._recalculate())
-
-            dl = tk.Label(row, text="0",
-                          font=("Segoe UI Semibold", 11),
-                          bg=stripe_bg, fg=THEME["text_muted"], width=12)
-            dl.grid(row=0, column=3, sticky="ew", padx=2)
-            self.diff_labels[d] = dl
-
-            ci_lbl = tk.Label(row, text="—",
-                              font=("Segoe UI Bold", 11),
-                              bg=stripe_bg, fg=THEME["success"], width=14)
-            ci_lbl.grid(row=0, column=4, sticky="ew", padx=2)
-            self.cash_in_labels[d] = ci_lbl
-
-            co_lbl = tk.Label(row, text="—",
-                              font=("Segoe UI Bold", 11),
-                              bg=stripe_bg, fg=THEME["danger"], width=14)
-            co_lbl.grid(row=0, column=5, sticky="ew", padx=2)
-            self.cash_out_labels[d] = co_lbl
-
-            tk.Frame(table_card, bg=THEME["border"], height=1).pack(fill="x")
-
-        ft = tk.Frame(table_card, bg="#EEF2FF", pady=12)
-        ft.pack(fill="x", pady=(4, 0))
-        ft.columnconfigure(tuple(range(6)), weight=1)
-
-        tk.Label(ft, text="", width=14,
-                 bg="#EEF2FF").grid(row=0, column=0, sticky="ew")
-        tk.Label(ft, text="", width=14,
-                 bg="#EEF2FF").grid(row=0, column=1, sticky="ew")
-        tk.Label(ft, text="", width=14,
-                 bg="#EEF2FF").grid(row=0, column=2, sticky="ew")
-        tk.Label(ft, text="TOTALS ➔",
-                 font=("Segoe UI Black", 10),
-                 bg="#EEF2FF", fg=THEME["text_main"],
-                 width=12).grid(row=0, column=3, sticky="ew")
-
-        self.sum_in_lbl = tk.Label(ft, text="₹0",
-                                    font=("Segoe UI Black", 11),
-                                    bg="#EEF2FF", fg=THEME["success"],
-                                    width=14)
-        self.sum_in_lbl.grid(row=0, column=4, sticky="ew")
-
-        self.sum_out_lbl = tk.Label(ft, text="₹0",
-                                     font=("Segoe UI Black", 11),
-                                     bg="#EEF2FF", fg=THEME["danger"],
-                                     width=14)
-        self.sum_out_lbl.grid(row=0, column=5, sticky="ew")
-
-        # ══════════════════════════════════════════════════════════════════════
-        # SECTION 3: LOWER AREA – Side by Side
-        # ══════════════════════════════════════════════════════════════════════
-        lower = tk.Frame(container, bg=THEME["bg_page"])
-        lower.pack(fill="x", padx=16, pady=8)
-        lower.columnconfigure(0, weight=1)
-        lower.columnconfigure(1, weight=1)
-
-        ic = tk.Frame(lower, bg=THEME["bg_card"], padx=24, pady=20)
-        ic.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        ic.config(highlightbackground=THEME["border"], highlightthickness=1)
-
-        self._section_header(ic, "📦", "Operational Figures",
-                             "Enter today's sales and payment info")
-
-        field_defs = [
-            ("💰 Total Daily Sales",          self.total_sales_var,    "#10B981"),
-            ("💵 Cash Received (₹500 Notes)",  self.cash_received_var, "#F59E0B"),
-            ("📱 UPI / GPay Amount",           self.upi_gpay_var,      "#6366F1"),
-            ("🧾 Operational Expenses",        self.expenses_var,       "#EF4444"),
+        self.output_value_labels = {}
+        outputs = [
+            ("Cash Sales", self.cash_sales_txt, THEME["success"]),
+            ("Expected Cash", self.expected_cash_txt, THEME["secondary"]),
+            ("Difference", self.difference_txt, THEME["warning"]),
+            ("Next Day Opening", self.next_opening_txt, THEME["dark"]),
         ]
+        for label_text, var, color in outputs:
+            box = tk.Frame(outputs_card, bg=THEME["surface_alt"], padx=16, pady=14)
+            box.pack(fill="x", pady=(0, 10))
+            box.config(highlightbackground=THEME["border"], highlightthickness=1)
+            tk.Label(
+                box,
+                text=label_text,
+                font=("Segoe UI Semibold", 10),
+                bg=THEME["surface_alt"],
+                fg=THEME["text_muted"],
+            ).pack(anchor="w")
+            value_label = tk.Label(
+                box,
+                textvariable=var,
+                font=("Segoe UI Variable Display", 20, "bold"),
+                bg=THEME["surface_alt"],
+                fg=color,
+            )
+            value_label.pack(anchor="w", pady=(6, 0))
+            self.output_value_labels[label_text] = value_label
 
-        for label_text, var, accent_color in field_defs:
-            f = tk.Frame(ic, bg=THEME["bg_card"], pady=6)
-            f.pack(fill="x")
+        self.result_box = tk.Frame(outputs_card, bg="#94A3B8", padx=18, pady=16)
+        self.result_box.pack(fill="x", pady=(6, 0))
+        tk.Label(
+            self.result_box,
+            text="Difference Interpretation",
+            font=("Segoe UI Black", 10),
+            bg="#94A3B8",
+            fg="white",
+        ).pack()
+        self.status_label = tk.Label(
+            self.result_box,
+            textvariable=self.status_txt,
+            font=("Segoe UI Variable Display", 20, "bold"),
+            bg="#94A3B8",
+            fg="white",
+        )
+        self.status_label.pack(pady=(4, 0))
 
-            lbl_f = tk.Frame(f, bg=THEME["bg_card"])
-            lbl_f.pack(side="left", fill="x", expand=True)
-            tk.Label(lbl_f, text="●",
-                     font=("Segoe UI", 8),
-                     bg=THEME["bg_card"], fg=accent_color).pack(
-                side="left", padx=(0, 8))
-            tk.Label(lbl_f, text=label_text,
-                     font=("Segoe UI Semibold", 10),
-                     bg=THEME["bg_card"], fg=THEME["text_main"]).pack(
-                side="left")
+        calc_card = tk.Frame(container, bg=THEME["bg_card"], padx=24, pady=22)
+        calc_card.pack(fill="x", padx=16, pady=8)
+        calc_card.config(highlightbackground=THEME["border"], highlightthickness=1)
+        self._section_title(calc_card, "Calculation Flow", "The page follows the exact sequence you specified.")
 
-            ew, _ = self._styled_entry(f, var, width=14, justify="right",
-                                       font=("Segoe UI Bold", 12))
-            ew.pack(side="right")
-            var.trace_add("write", lambda *a: self._recalculate())
+        for var, color in (
+            (self.calc_line1, THEME["success"]),
+            (self.calc_line2, THEME["secondary"]),
+            (self.calc_line3, THEME["warning"]),
+            (self.calc_line4, THEME["dark"]),
+        ):
+            line = tk.Frame(calc_card, bg=THEME["surface_alt"], padx=14, pady=12)
+            line.pack(fill="x", pady=4)
+            line.config(highlightbackground=THEME["border"], highlightthickness=1)
+            tk.Frame(line, bg=color, width=4).pack(side="left", fill="y", padx=(0, 10))
+            tk.Label(
+                line,
+                textvariable=var,
+                font=("Consolas", 10, "bold"),
+                bg=THEME["surface_alt"],
+                fg=color,
+                anchor="w",
+                justify="left",
+            ).pack(fill="x")
 
-        rc = tk.Frame(lower, bg=THEME["bg_card"], padx=24, pady=20)
-        rc.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        rc.config(highlightbackground=THEME["border"], highlightthickness=1)
-
-        self._section_header(rc, "📊", "Visualized Calculation",
-                             "Step-by-step breakdown of today's result")
-
-        calc_colors = [
-            (self.total1_txt,   THEME["secondary"]),
-            (self.total2_txt,   THEME["primary"]),
-            (self.shortage_txt, "#7C3AED"),
-            (self.final_txt,    THEME["dark"]),
-        ]
-
-        for var, color in calc_colors:
-            line_f = tk.Frame(rc, bg="#F8FAFC", padx=14, pady=10, bd=0)
-            line_f.pack(fill="x", pady=4)
-            line_f.config(highlightbackground="#E2E8F0", highlightthickness=1)
-
-            tk.Frame(line_f, bg=color, width=4).pack(
-                side="left", fill="y", padx=(0, 10))
-
-            tk.Label(line_f, textvariable=var,
-                     font=("Consolas", 10, "bold"),
-                     bg="#F8FAFC", fg=color,
-                     anchor="w", justify="left").pack(fill="x")
-
-        self.res_box = tk.Frame(rc, bg="#94A3B8", padx=24, pady=18)
-        self.res_box.pack(fill="x", pady=(14, 0))
-
-        res_inner = tk.Frame(self.res_box, bg="#94A3B8")
-        res_inner.pack()
-        tk.Label(res_inner, text="✦  FINALIZED RESULT  ✦",
-                 font=("Segoe UI Black", 10, "bold"),
-                 bg="#94A3B8", fg="white").pack(pady=(0, 4))
-        self.res_val_lbl = tk.Label(res_inner, text="₹0.00",
-                                     font=("Segoe UI Variable Display", 28,
-                                           "bold"),
-                                     bg="#94A3B8", fg="white")
-        self.res_val_lbl.pack()
-
-        # ══════════════════════════════════════════════════════════════════════
-        # SECTION 4: SAVE BUTTON
-        # ══════════════════════════════════════════════════════════════════════
         save_f = tk.Frame(container, bg=THEME["bg_page"], padx=16)
         save_f.pack(fill="x", pady=(8, 20))
-
         save_btn = tk.Button(
             save_f,
-            text="💾   SAVE TODAY'S DATA  &  SYNC TO NEXT DAY",
+            text="SAVE DAILY CASH RECORD",
             command=self._save_record,
-            bg=THEME["primary"], fg="white",
-            font=("Segoe UI Variable Display", 13, "bold"),
-            bd=0, pady=16, cursor="hand2",
+            bg=THEME["primary"],
+            fg="white",
             activebackground=THEME["primary_dk"],
-            activeforeground="white")
+            activeforeground="white",
+            font=("Segoe UI Variable Display", 13, "bold"),
+            bd=0,
+            pady=16,
+            cursor="hand2",
+        )
         save_btn.pack(fill="x")
 
-        save_btn.bind("<Enter>",
-                      lambda e: save_btn.config(bg=THEME["primary_dk"]))
-        save_btn.bind("<Leave>",
-                      lambda e: save_btn.config(bg=THEME["primary"]))
-
-    # ── Canvas Handler ───────────────────────────────────────────────────────
-    def _on_canvas_configure(self, event):
-        self.canvas.itemconfig(self.canvas_window, width=event.width)
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # LOGIC – COMPLETELY UNCHANGED BELOW THIS LINE
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    def _safe_float(self, var):
-        try: return float(str(var.get()).replace(",", ""))
-        except: return 0.0
-
-    def _safe_int(self, var):
-        try: return int(str(var.get()))
-        except: return 0
+    def _on_date_picked(self, picked_date):
+        self._selected_date = picked_date
+        self._load_data()
 
     def _recalculate(self):
-        # 1. Table Math
-        sum_in = 0.0
-        sum_out = 0.0
-        for d in DENOMS:
-            opening = self.opening_vars[d].get()  # Yesterday
-            closing = self._safe_int(self.closing_vars[d])  # Today
-            diff = closing - opening
-            equiv = diff * d
-
-            cl = THEME["success"] if diff > 0 else (
-                THEME["danger"] if diff < 0 else THEME["text_muted"])
-            self.diff_labels[d].config(text=f"{diff:+,}", fg=cl)
-
-            ci = equiv if equiv > 0 else 0
-            co = abs(equiv) if equiv < 0 else 0
-            self.cash_in_labels[d].config(
-                text=f"₹{ci:,}" if ci > 0 else "—")
-            self.cash_out_labels[d].config(
-                text=f"₹{co:,}" if co > 0 else "—")
-
-            sum_in += ci
-            sum_out += co
-
-        self.sum_in_lbl.config(text=f"₹{sum_in:,.0f}")
-        self.sum_out_lbl.config(text=f"₹{sum_out:,.0f}")
-
-        # 2. Formula Breakdown Text
-        self._total1 = sum_in - sum_out
-        self.total1_txt.set(
-            f"Total 1 = (Cash In ₹{sum_in:,.0f} - Cash Out ₹{sum_out:,.0f})"
-            f"\n        = ₹{self._total1:,.2f}")
-
-        sales = self._safe_float(self.total_sales_var)
-        cash_rec = self._safe_float(self.cash_received_var)  # 500s
-        upi = self._safe_float(self.upi_gpay_var)
+        opening_cash = self._safe_float(self.opening_cash_var)
+        total_sales = self._safe_float(self.total_sales_var)
+        gpay_sales = self._safe_float(self.gpay_sales_var)
+        taken_500 = self._safe_float(self.taken_500_var)
         expenses = self._safe_float(self.expenses_var)
+        actual_cash = self._safe_float(self.actual_cash_var)
 
-        self._total2 = sales - (upi + cash_rec)
-        self.total2_txt.set(
-            f"Total 2 = (Sales ₹{sales:,.0f} - (GPay ₹{upi:,.0f}"
-            f" + 500s ₹{cash_rec:,.0f}))"
-            f"\n        = ₹{self._total2:,.2f}")
+        cash_sales = total_sales - gpay_sales
+        expected_cash = opening_cash + cash_sales - taken_500 - expenses
+        difference = actual_cash - expected_cash
+        next_opening_cash = actual_cash
 
-        self._shortage = self._total1 - self._total2
-        self.shortage_txt.set(
-            f"Shortage = (Total 1 ₹{self._total1:,.2f}"
-            f" - Total 2 ₹{self._total2:,.2f})"
-            f"\n           = ₹{self._shortage:,.2f}")
+        self.cash_sales_txt.set(f"Rs {cash_sales:,.2f}")
+        self.expected_cash_txt.set(f"Rs {expected_cash:,.2f}")
+        self.difference_txt.set(f"Rs {difference:,.2f}")
+        self.next_opening_txt.set(f"Rs {next_opening_cash:,.2f}")
 
-        self._finalized = self._shortage - expenses
-        self.final_txt.set(
-            f"Final    = (Shortage ₹{self._shortage:,.2f}"
-            f" - Expenses ₹{expenses:,.2f})"
-            f"\n           = ₹{self._finalized:,.2f}")
+        self.calc_line1.set(
+            f"cash_sales = total_sales ({total_sales:,.2f}) - gpay_sales ({gpay_sales:,.2f}) = Rs {cash_sales:,.2f}"
+        )
+        self.calc_line2.set(
+            f"expected_cash = opening_cash ({opening_cash:,.2f}) + cash_sales ({cash_sales:,.2f}) - taken_500 ({taken_500:,.2f}) - expenses ({expenses:,.2f}) = Rs {expected_cash:,.2f}"
+        )
+        self.calc_line3.set(
+            f"difference = actual_cash ({actual_cash:,.2f}) - expected_cash ({expected_cash:,.2f}) = Rs {difference:,.2f}"
+        )
+        self.calc_line4.set(
+            f"next_opening_cash = actual_cash ({actual_cash:,.2f}) = Rs {next_opening_cash:,.2f}"
+        )
 
-        self.res_val_lbl.config(text=f"₹{self._finalized:,.2f}")
+        if difference > 0:
+            status_text = "Extra Cash"
+            color = THEME["success"]
+        elif difference < 0:
+            status_text = "Missing Cash"
+            color = THEME["danger"]
+        else:
+            status_text = "No Loss / Gain"
+            color = "#64748B"
 
-        # 3. Dynamic Coloring
-        color = THEME["success"] if self._finalized > 0 else (
-            THEME["danger"] if self._finalized < 0 else "#64748B")
-        self.res_box.config(bg=color)
-        for w in self.res_box.winfo_children():
-            w.config(bg=color)
-            for ww in w.winfo_children():
-                ww.config(bg=color)
+        self.status_txt.set(status_text)
+        self.result_box.config(bg=color)
+        for child in self.result_box.winfo_children():
+            child.config(bg=color)
+
+        self.output_value_labels["Difference"].config(fg=color)
+        self.output_value_labels["Cash Sales"].config(fg=THEME["success"])
+        self.output_value_labels["Expected Cash"].config(fg=THEME["secondary"])
+        self.output_value_labels["Next Day Opening"].config(fg=THEME["dark"])
 
     def _load_data(self):
-        # Sync the hidden date_ent with the selected date
         self._selected_date = self._date_picker.selected_date
         self.date_ent.delete(0, "end")
         self.date_ent.insert(0, self._selected_date.strftime("%Y-%m-%d"))
-
         date_str = self.date_ent.get().strip()
+
         conn = self.db.get_connection()
         cur = conn.cursor()
 
         cur.execute(
-            "SELECT closing_10, closing_20, closing_50, closing_100,"
-            " closing_200 FROM cashier_records WHERE date < ?"
-            " ORDER BY date DESC LIMIT 1", (date_str,))
+            "SELECT actual_cash, finalized_amount FROM cashier_records WHERE date < ? ORDER BY date DESC LIMIT 1",
+            (date_str,),
+        )
         prev = cur.fetchone()
 
-        cur.execute("SELECT * FROM cashier_records WHERE date=?",
-                    (date_str,))
+        cur.execute("SELECT * FROM cashier_records WHERE date=?", (date_str,))
         today = cur.fetchone()
         conn.close()
 
+        previous_actual = 0.0
         if prev:
-            for d in DENOMS:
-                self.opening_vars[d].set(prev[f"closing_{d}"])
-        else:
-            for d in DENOMS:
-                self.opening_vars[d].set(0)
+            previous_actual = prev["actual_cash"] if "actual_cash" in prev.keys() else prev["finalized_amount"]
+            previous_actual = previous_actual or 0.0
 
         if today:
-            for d in DENOMS:
-                self.closing_vars[d].set(str(today[f"closing_{d}"]))
-            self.total_sales_var.set(str(today["total_sales"]))
-            self.cash_received_var.set(str(today["cash_received_500"]))
-            self.upi_gpay_var.set(str(today["upi_gpay"]))
-            self.expenses_var.set(str(today["expenses"]))
+            opening_val = today["opening_cash"] if "opening_cash" in today.keys() else previous_actual
+            self.opening_cash_var.set(str(opening_val or 0))
+            self.total_sales_var.set(str(today["total_sales"] or 0))
+            gpay = today["gpay_sales"] if "gpay_sales" in today.keys() else today["upi_gpay"]
+            taken_500 = today["taken_500"] if "taken_500" in today.keys() else today["cash_received_500"]
+            actual_cash = today["actual_cash"] if "actual_cash" in today.keys() else today["finalized_amount"]
+            self.gpay_sales_var.set(str(gpay or 0))
+            self.taken_500_var.set(str(taken_500 or 0))
+            self.expenses_var.set(str(today["expenses"] or 0))
+            self.actual_cash_var.set(str(actual_cash or 0))
         else:
-            for d in DENOMS:
-                self.closing_vars[d].set("0")
+            self.opening_cash_var.set(str(previous_actual or 0))
             self.total_sales_var.set("0")
-            self.cash_received_var.set("0")
-            self.upi_gpay_var.set("0")
+            self.gpay_sales_var.set("0")
+            self.taken_500_var.set("0")
             self.expenses_var.set("0")
+            self.actual_cash_var.set("0")
 
         self._recalculate()
 
@@ -573,41 +439,57 @@ class MoneyView(tk.Frame):
         self._selected_date = self._date_picker.selected_date
         self.date_ent.delete(0, "end")
         self.date_ent.insert(0, self._selected_date.strftime("%Y-%m-%d"))
-
         date_str = self.date_ent.get().strip()
+
         self._recalculate()
+
+        opening_cash = self._safe_float(self.opening_cash_var)
+        total_sales = self._safe_float(self.total_sales_var)
+        gpay_sales = self._safe_float(self.gpay_sales_var)
+        taken_500 = self._safe_float(self.taken_500_var)
+        expenses = self._safe_float(self.expenses_var)
+        actual_cash = self._safe_float(self.actual_cash_var)
+        cash_sales = total_sales - gpay_sales
+        expected_cash = opening_cash + cash_sales - taken_500 - expenses
+        difference = actual_cash - expected_cash
+        next_opening_cash = actual_cash
 
         data = {
             "date": date_str,
-            "total_sales": self._safe_float(self.total_sales_var),
-            "cash_received_500": self._safe_float(self.cash_received_var),
-            "upi_gpay": self._safe_float(self.upi_gpay_var),
-            "expenses": self._safe_float(self.expenses_var),
-            "total1": self._total1,
-            "total2": self._total2,
-            "shortage": self._shortage,
-            "finalized_amount": self._finalized
+            "opening_cash": opening_cash,
+            "total_sales": total_sales,
+            "gpay_sales": gpay_sales,
+            "taken_500": taken_500,
+            "expenses": expenses,
+            "actual_cash": actual_cash,
+            "cash_sales": cash_sales,
+            "expected_cash": expected_cash,
+            "difference": difference,
+            "next_opening_cash": next_opening_cash,
+            "upi_gpay": gpay_sales,
+            "cash_received_500": taken_500,
+            "total1": cash_sales,
+            "total2": expected_cash,
+            "shortage": difference,
+            "finalized_amount": actual_cash,
         }
-        for d in DENOMS:
-            data[f"opening_{d}"] = self.opening_vars[d].get()
-            data[f"closing_{d}"] = self._safe_int(self.closing_vars[d])
 
         conn = self.db.get_connection()
         cur = conn.cursor()
         try:
             cols = ", ".join(data.keys())
-            places = ", ".join(["?"] * len(data))
-            upd = ", ".join([f"{k}=excluded.{k}"
-                             for k in data.keys() if k != "date"])
+            placeholders = ", ".join(["?"] * len(data))
+            updates = ", ".join([f"{k}=excluded.{k}" for k in data.keys() if k != "date"])
             cur.execute(
-                f"INSERT INTO cashier_records ({cols}) VALUES ({places})"
-                f" ON CONFLICT(date) DO UPDATE SET {upd}",
-                list(data.values()))
+                f"INSERT INTO cashier_records ({cols}) VALUES ({placeholders}) "
+                f"ON CONFLICT(date) DO UPDATE SET {updates}",
+                list(data.values()),
+            )
             conn.commit()
             messagebox.showinfo(
-                "Saved ✔",
-                f"Record for {date_str} saved!\n"
-                "Counts will automatically sync when you load the next date.")
+                "Saved",
+                f"Record for {date_str} saved.\nNext day opening cash will now follow this day's actual cash.",
+            )
         except Exception as e:
             messagebox.showerror("Error", str(e))
         finally:
@@ -615,52 +497,73 @@ class MoneyView(tk.Frame):
 
     def _show_history(self):
         win = tk.Toplevel(self)
-        win.title("Historical Records")
-        win.geometry("1100x600")
+        win.title("Cash Tracking History")
+        win.geometry("1180x620")
         win.configure(bg=THEME["bg_page"])
 
         top = tk.Frame(win, bg=THEME["bg_card"], padx=20, pady=15)
         top.pack(fill="x")
 
         tk.Label(top, text="From:", bg=THEME["bg_card"]).pack(side="left")
-        s = tk.Entry(top, width=12)
-        s.pack(side="left", padx=5)
-        s.insert(0, (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"))
+        start = tk.Entry(top, width=12)
+        start.pack(side="left", padx=5)
+        start.insert(0, (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"))
 
-        tk.Label(top, text="To:", bg=THEME["bg_card"]).pack(
-            side="left", padx=10)
-        e = tk.Entry(top, width=12)
-        e.pack(side="left", padx=5)
-        e.insert(0, datetime.now().strftime("%Y-%m-%d"))
+        tk.Label(top, text="To:", bg=THEME["bg_card"]).pack(side="left", padx=10)
+        end = tk.Entry(top, width=12)
+        end.pack(side="left", padx=5)
+        end.insert(0, datetime.now().strftime("%Y-%m-%d"))
 
-        def load():
-            for r in tree.get_children():
-                tree.delete(r)
-            conn = self.db.get_connection()
-            rows = conn.execute(
-                "SELECT * FROM cashier_records WHERE date BETWEEN ? AND ?"
-                " ORDER BY date DESC",
-                (s.get(), e.get())).fetchall()
-            conn.close()
-            for r in rows:
-                tree.insert("", "end", values=(
-                    r["date"],
-                    f"₹{r['total_sales']:,}",
-                    f"₹{r['shortage']:,}",
-                    f"₹{r['finalized_amount']:,}"))
-
-        tk.Button(top, text="🔍 Look Up", command=load,
-                  bg=THEME["dark"], fg="white", bd=0,
-                  padx=20, pady=7).pack(side="left", padx=20)
-
-        cols = ("Date", "Total Sales", "Shortage", "Final Amount")
+        cols = (
+            "Date",
+            "Opening Cash",
+            "Cash Sales",
+            "Expected Cash",
+            "Actual Cash",
+            "Difference",
+        )
         tree = ttk.Treeview(win, columns=cols, show="headings")
-        for c in cols:
-            tree.heading(c, text=c)
-            tree.column(c, width=200, anchor="center")
+        for col in cols:
+            tree.heading(col, text=col)
+            tree.column(col, width=180, anchor="center")
         tree.pack(fill="both", expand=True, padx=25, pady=25)
 
-        def select(evt):
+        def load():
+            for row in tree.get_children():
+                tree.delete(row)
+            conn = self.db.get_connection()
+            rows = conn.execute(
+                "SELECT date, opening_cash, cash_sales, expected_cash, actual_cash, difference "
+                "FROM cashier_records WHERE date BETWEEN ? AND ? ORDER BY date DESC",
+                (start.get(), end.get()),
+            ).fetchall()
+            conn.close()
+            for row in rows:
+                tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        row["date"],
+                        f"Rs {row['opening_cash']:,.2f}",
+                        f"Rs {row['cash_sales']:,.2f}",
+                        f"Rs {row['expected_cash']:,.2f}",
+                        f"Rs {row['actual_cash']:,.2f}",
+                        f"Rs {row['difference']:,.2f}",
+                    ),
+                )
+
+        tk.Button(
+            top,
+            text="Look Up",
+            command=load,
+            bg=THEME["dark"],
+            fg="white",
+            bd=0,
+            padx=20,
+            pady=7,
+        ).pack(side="left", padx=20)
+
+        def select(_event):
             sel = tree.selection()
             if not sel:
                 return
