@@ -1,0 +1,10 @@
+import sqlite3
+conn = sqlite3.connect("dress_shop.db")
+cur = conn.cursor()
+cur.execute("PRAGMA table_info(cash_records)")
+print("cash_records:", [r[1] for r in cur.fetchall()])
+cur.execute("PRAGMA table_info(attendance)")
+print("attendance:", [r[1] for r in cur.fetchall()])
+cur.execute("PRAGMA index_list(attendance)")
+print("attendance_indexes:", cur.fetchall())
+conn.close()
