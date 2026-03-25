@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+
+Thumbs.db
+.DS_Store
+
+*.log
+
+*.db
+*.db.bak
+*.sqbpro
+*.xlsx
+
+dress_shop_mgmt/credentials.json
+dress_shop_mgmt/backups/
+dress_shop_mgmt/notifications/
